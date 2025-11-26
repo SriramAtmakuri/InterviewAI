@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: interviewai-backend
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_STORAGE_BUCKET
+        sync: false
+      - key: FRONTEND_URL
+        value: https://your-frontend-domain.com
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 900000
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: 100
+      - key: CODE_EXECUTION_TIMEOUT
+        value: 10000
+      - key: MAX_CODE_LENGTH
+        value: 10000
+      - key: MAX_VIDEO_SIZE_MB
+        value: 100

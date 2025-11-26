@@ -1,0 +1,379 @@
+import { useState, useEffect, useRef, useMemo } from "react";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Target, Mic, MicOff, Send, StopCircle, Code } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { useToast } from "@/hooks/use-toast";
+import type { InterviewConfig, InterviewSession, Message } from "@/types/interview";
+import CodeEditor from "@/components/CodeEditor";
+import InterviewHints from "@/components/InterviewHints";
+import GamificationPanel from "@/components/GamificationPanel";
+import { generateFeedback } from "@/utils/feedbackGenerator";
+import { getRandomProblem, formatProblemDescription, getInitialCode, type CodingProblem } from "@/utils/codingProblems";
+
+const InterviewSessionPage = () => {
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  const [config, setConfig] = useState<InterviewConfig | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [isRecording, setIsRecording] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [activeTab, setActiveTab] = useState<string>("chat");
+  const [showCodeChallenge, setShowCodeChallenge] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<any>(null);
+
+  // Generate coding problem based on job role and difficulty
+  const codingProblem = useMemo(() => {
+    if (!config) return null;
+
+    const jobRole = (config as any).parsedJD?.jobRole || 'general';
+    const difficulty = config.difficulty as 'entry' | 'mid' | 'senior';
+
+    return getRandomProblem(jobRole, difficulty);
+  }, [config]);
+
+  useEffect(() => {
+    const configStr = localStorage.getItem("currentInterviewConfig");
+    if (!configStr) {
+      navigate("/interview/setup");
+      return;
+    }
+    const parsedConfig = JSON.parse(configStr);
+    setConfig(parsedConfig);
+
+    // Initialize with first AI question
+    const initialQuestion = generateInitialQuestion(parsedConfig);
+    setMessages([{
+      id: Date.now().toString(),
+      role: "ai",
+      content: initialQuestion,
+      timestamp: new Date(),
+    }]);
+
+    // Initialize speech recognition
+    if ('webkitSpeechRecognition' in window) {
+      const recognition = new (window as any).webkitSpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        setInput(transcript);
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error);
+        setIsRecording(false);
+      };
+
+      recognition.onend = () => {
+        setIsRecording(false);
+      };
+
+      recognitionRef.current = recognition;
+    }
+  }, [navigate]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const generateInitialQuestion = (cfg: InterviewConfig): string => {
+    // Use custom questions from JD if available
+    if ((cfg as any).customQuestions && (cfg as any).customQuestions.length > 0) {
+      const customQ = (cfg as any).customQuestions[0];
+      return `Hello! I've analyzed the job description and I'm excited to conduct this ${cfg.difficulty} level ${cfg.type} interview for the ${cfg.jobTitle} position at ${cfg.company}. ${customQ}`;
+    }
+
+    const questions: Record<string, string> = {
+      behavioral: `Hello! I'm excited to conduct this ${cfg.difficulty} level behavioral interview for the ${cfg.jobTitle} position at ${cfg.company}. Let's start with: Tell me about a time when you faced a challenging situation at work and how you handled it.`,
+      technical: `Welcome! Today we'll be discussing technical concepts for the ${cfg.jobTitle} role at ${cfg.company}. Let's begin: Can you explain the difference between REST and GraphQL APIs, and when you would choose one over the other?`,
+      "system-design": `Hi there! For this ${cfg.difficulty} level system design interview at ${cfg.company}, let's start with: How would you design a URL shortening service like bit.ly? Walk me through your approach.`,
+      coding: `Hello! Let's begin your coding interview for ${cfg.jobTitle} at ${cfg.company}. Here's your first problem: Write a function that determines if a string has all unique characters. What would be your approach?`,
+    };
+    return questions[cfg.type] || questions.behavioral;
+  };
+
+  const generateAIResponse = (userMessage: string, cfg: InterviewConfig): string => {
+    // Use custom questions from parsed JD
+    if ((cfg as any).customQuestions && (cfg as any).customQuestions.length > 0) {
+      const customQuestions = (cfg as any).customQuestions;
+      const randomCustom = customQuestions[Math.floor(Math.random() * customQuestions.length)];
+      
+      // Mix custom with generic follow-ups
+      if (Math.random() > 0.5) {
+        return randomCustom;
+      }
+    }
+
+    // Add coding challenge trigger
+    if (cfg.type === "coding" && messages.length > 4 && !showCodeChallenge && Math.random() > 0.6) {
+      setTimeout(() => setShowCodeChallenge(true), 1000);
+      return "Great discussion so far! Now I'd like to see you code. I'm opening a coding challenge in the editor. Please solve it and run your code when ready.";
+    }
+
+    const responses: Record<string, string[]> = {
+      behavioral: [
+        "That's a great example. Can you tell me more about how you collaborated with your team during that situation?",
+        "Interesting approach. What would you do differently if you faced a similar situation again?",
+        "I see. How did you measure the success of your solution?",
+        "Thank you for sharing. Let's move on: Describe a time when you had to learn a new technology quickly.",
+      ],
+      technical: [
+        "Good explanation. Can you dive deeper into the performance implications?",
+        "That makes sense. How would you handle error cases in this scenario?",
+        "Excellent. Now, can you explain how you would implement caching in this system?",
+        "Interesting point. What security considerations should we keep in mind here?",
+      ],
+      "system-design": [
+        "Great start. How would you handle scaling to millions of users?",
+        "That's a solid approach. What about data consistency and redundancy?",
+        "Good thinking. Can you elaborate on your choice of database?",
+        "Excellent. How would you monitor and maintain this system in production?",
+      ],
+      coding: [
+        "Nice solution! What's the time and space complexity of your approach?",
+        "Good thinking. Can you optimize this further?",
+        "That works. How would you handle edge cases like empty inputs?",
+        "Excellent. Can you write test cases for this function?",
+      ],
+    };
+
+    const typeResponses = responses[cfg.type] || responses.behavioral;
+    return typeResponses[Math.floor(Math.random() * typeResponses.length)];
+  };
+
+  const handleSendMessage = async () => {
+    if (!input.trim() || !config) return;
+
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      content: input.trim(),
+      timestamp: new Date(),
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    setInput("");
+    setIsProcessing(true);
+
+    // Simulate AI processing delay
+    setTimeout(() => {
+      const aiResponse: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "ai",
+        content: generateAIResponse(userMessage.content, config),
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, aiResponse]);
+      setIsProcessing(false);
+    }, 1500);
+  };
+
+  const toggleRecording = () => {
+    if (!recognitionRef.current) {
+      toast({
+        title: "Not supported",
+        description: "Speech recognition is not supported in your browser.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (isRecording) {
+      recognitionRef.current.stop();
+      setIsRecording(false);
+    } else {
+      recognitionRef.current.start();
+      setIsRecording(true);
+    }
+  };
+
+  const handleEndInterview = () => {
+    // Generate real-time feedback based on actual messages
+    const feedback = generateFeedback(messages, config!);
+
+    const session: InterviewSession = {
+      id: Date.now().toString(),
+      config: config!,
+      messages,
+      startTime: new Date(messages[0].timestamp),
+      endTime: new Date(),
+      status: "completed",
+      feedback,
+    };
+
+    const existingSessions = JSON.parse(localStorage.getItem("interviewSessions") || "[]");
+    localStorage.setItem("interviewSessions", JSON.stringify([...existingSessions, session]));
+
+    // Also save to history for analytics
+    const historyEntry = {
+      id: session.id,
+      date: new Date(),
+      timestamp: new Date(),
+      score: feedback.overallScore,
+      type: config!.type,
+      duration: Math.floor((session.endTime.getTime() - session.startTime.getTime()) / 60000)
+    };
+    const history = JSON.parse(localStorage.getItem("interviewHistory") || "[]");
+    localStorage.setItem("interviewHistory", JSON.stringify([...history, historyEntry]));
+
+    toast({
+      title: "Interview completed!",
+      description: `Your overall score: ${feedback.overallScore}%`,
+    });
+
+    navigate("/history");
+  };
+
+  if (!config) return null;
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col">
+      <header className="border-b border-border/40 backdrop-blur-sm sticky top-0 z-50 bg-background/80">
+        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Target className="h-8 w-8 text-primary" />
+            <div>
+              <h2 className="font-semibold">{config.jobTitle}</h2>
+              <p className="text-sm text-muted-foreground">{config.company}</p>
+            </div>
+          </div>
+          <Button variant="destructive" onClick={handleEndInterview}>
+            <StopCircle className="mr-2 h-4 w-4" />
+            End Interview
+          </Button>
+        </div>
+      </header>
+
+      <div className="flex-1 overflow-y-auto">
+        <div className="container mx-auto px-4 py-8 max-w-7xl">
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            {/* Main Interview Area */}
+            <div className="lg:col-span-3">
+              <Tabs value={activeTab} onValueChange={setActiveTab}>
+                <TabsList className="grid w-full grid-cols-2 mb-6">
+                  <TabsTrigger value="chat">Chat Interview</TabsTrigger>
+                  <TabsTrigger value="code">
+                    <Code className="h-4 w-4 mr-2" />
+                    Code Editor
+                  </TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="chat" className="space-y-6">
+                  {messages.map((message) => (
+              <div
+                key={message.id}
+                className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+              >
+                <Card
+                  className={`p-4 max-w-[80%] ${
+                    message.role === "user"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-card"
+                  }`}
+                >
+                  <p className="text-sm mb-1 opacity-70">
+                    {message.role === "ai" ? "AI Interviewer" : "You"}
+                  </p>
+                  <p className="whitespace-pre-wrap">{message.content}</p>
+                </Card>
+              </div>
+                  ))}
+                  {isProcessing && (
+                    <div className="flex justify-start">
+                      <Card className="p-4 max-w-[80%] bg-card">
+                        <p className="text-sm mb-1 opacity-70">AI Interviewer</p>
+                        <div className="flex gap-2">
+                          <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
+                          <div className="w-2 h-2 bg-primary rounded-full animate-pulse delay-75" />
+                          <div className="w-2 h-2 bg-primary rounded-full animate-pulse delay-150" />
+                        </div>
+                      </Card>
+                    </div>
+                  )}
+                  <div ref={messagesEndRef} />
+                </TabsContent>
+
+                <TabsContent value="code">
+                  {showCodeChallenge && codingProblem ? (
+                    <CodeEditor
+                      initialCode={getInitialCode(codingProblem, 'javascript')}
+                      language="javascript"
+                      problemDescription={formatProblemDescription(codingProblem)}
+                    />
+                  ) : (
+                    <Card className="p-12 text-center">
+                      <Code className="h-16 w-16 mx-auto mb-4 text-muted-foreground" />
+                      <h3 className="text-xl font-semibold mb-2">Code Editor Ready</h3>
+                      <p className="text-muted-foreground mb-4">
+                        The interviewer will present a coding challenge when appropriate.
+                        You can also practice here anytime.
+                      </p>
+                      <Button onClick={() => setShowCodeChallenge(true)}>
+                        Start Practice Challenge
+                      </Button>
+                    </Card>
+                  )}
+                </TabsContent>
+              </Tabs>
+            </div>
+
+            {/* Sidebar with hints and gamification */}
+            <div className="space-y-6">
+              <InterviewHints 
+                interviewType={config.type} 
+                currentQuestion={messages[messages.length - 1]?.content || ""}
+              />
+              <GamificationPanel />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-border/40 bg-background/80 backdrop-blur-sm">
+        <div className="container mx-auto px-4 py-4 max-w-7xl">
+          <div className="flex gap-2">
+            <Textarea
+              placeholder="Type your answer or use voice input..."
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSendMessage();
+                }
+              }}
+              className="min-h-[60px] max-h-[200px]"
+            />
+            <div className="flex flex-col gap-2">
+              <Button
+                size="icon"
+                variant={isRecording ? "destructive" : "outline"}
+                onClick={toggleRecording}
+                className="h-[60px]"
+              >
+                {isRecording ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+              </Button>
+              <Button
+                size="icon"
+                onClick={handleSendMessage}
+                disabled={!input.trim() || isProcessing}
+                className="h-[60px]"
+              >
+                <Send className="h-5 w-5" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default InterviewSessionPage;
