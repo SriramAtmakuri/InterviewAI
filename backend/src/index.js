@@ -5,17 +5,14 @@ import compression from 'compression';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
 
-// Load environment variables
 dotenv.config();
 
-// Import routes
 import interviewRoutes from './routes/interviewRoutes.js';
 import codeRoutes from './routes/codeRoutes.js';
 import resumeRoutes from './routes/resumeRoutes.js';
 import videoRoutes from './routes/videoRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 
-// Import middleware
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import {
   apiLimiter,
